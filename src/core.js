@@ -53,6 +53,9 @@ let root;
 /** @type {?Document} */
 let doc;
 
+/** @type {?function()} */
+let findNode;
+
 
 /**
  * Sets up and restores a patch context, running the patch function with the
@@ -192,6 +195,15 @@ const alignWithDOM = function(nodeName, key, statics) {
     }
   }
 
+  // Check to see if the `findNode` function (registered through
+  // `registerFindNode`) returns a matching node.
+  if (!node && findNode) {
+    node = findNode.apply(null, arguments);
+    if (node === currentNode) {
+      return;
+    }
+  }
+
   // Create the node if it doesn't exist.
   if (!node) {
     if (nodeName === '#text') {
@@ -319,7 +331,7 @@ const exitNode = function() {
  */
 const elementOpen = function(tag, key, statics) {
   nextNode();
-  alignWithDOM(tag, key, statics);
+  alignWithDOM.apply(null, arguments);
   enterNode();
   return /** @type {!Element} */(currentParent);
 };
@@ -366,6 +378,10 @@ const currentElement = function() {
   return /** @type {!Element} */(currentParent);
 };
 
+const registerFindNode = function(findNodeFn) {
+  findNode = findNodeFn;
+};
+
 
 /**
  * Skips the children in a subtree, allowing an Element to be closed without
@@ -388,5 +404,6 @@ export {
   patchInner,
   patchOuter,
   currentElement,
+  registerFindNode,
   skip
 };

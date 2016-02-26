@@ -19,6 +19,7 @@ export {
   patchInner,
   patchOuter,
   currentElement,
+  registerFindNode,
   skip
 } from './src/core';
 export {
