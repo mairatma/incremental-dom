@@ -175,8 +175,8 @@ var importNode = function (node) {
     return;
   }
 
-  var nodeName = node.nodeName.toLowerCase();
   var isElement = node instanceof Element;
+  var nodeName = isElement ? node.localName : node.nodeName;
   var key = isElement ? node.getAttribute('key') : null;
   var data = initData(node, nodeName, key);
 
@@ -341,6 +341,171 @@ Context.prototype.notifyChanges = function () {
 };
 
 /**
+ * Copyright 2015 The Incremental DOM Authors. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS-IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+  * Keeps track whether or not we are in an attributes declaration (after
+  * elementOpenStart, but before elementOpenEnd).
+  * @type {boolean}
+  */
+var inAttributes = false;
+
+/**
+  * Keeps track whether or not we are in an element that should not have its
+  * children cleared.
+  * @type {boolean}
+  */
+var inSkip = false;
+
+/**
+ * Makes sure that there is a current patch context.
+ * @param {string} functionName
+ * @param {*} context
+ */
+var assertInPatch = function (functionName, context) {
+  if (!context) {
+    throw new Error('Cannot call ' + functionName + '() unless in patch.');
+  }
+};
+
+/**
+ * Makes sure that a patch closes every node that it opened.
+ * @param {?Node} openElement
+ * @param {!Node|!DocumentFragment} root
+ */
+var assertNoUnclosedTags = function (openElement, root) {
+  if (openElement === root) {
+    return;
+  }
+
+  var currentElement = openElement;
+  var openTags = [];
+  while (currentElement && currentElement !== root) {
+    openTags.push(currentElement.nodeName.toLowerCase());
+    currentElement = currentElement.parentNode;
+  }
+
+  throw new Error('One or more tags were not closed:\n' + openTags.join('\n'));
+};
+
+/**
+ * Makes sure that the caller is not where attributes are expected.
+ * @param {string} functionName
+ */
+var assertNotInAttributes = function (functionName) {
+  if (inAttributes) {
+    throw new Error(functionName + '() can not be called between ' + 'elementOpenStart() and elementOpenEnd().');
+  }
+};
+
+/**
+ * Makes sure that the caller is not inside an element that has declared skip.
+ * @param {string} functionName
+ */
+var assertNotInSkip = function (functionName) {
+  if (inSkip) {
+    throw new Error(functionName + '() may not be called inside an element ' + 'that has called skip().');
+  }
+};
+
+/**
+ * Makes sure that the caller is where attributes are expected.
+ * @param {string} functionName
+ */
+var assertInAttributes = function (functionName) {
+  if (!inAttributes) {
+    throw new Error(functionName + '() can only be called after calling ' + 'elementOpenStart().');
+  }
+};
+
+/**
+ * Makes sure the patch closes virtual attributes call
+ */
+var assertVirtualAttributesClosed = function () {
+  if (inAttributes) {
+    throw new Error('elementOpenEnd() must be called after calling ' + 'elementOpenStart().');
+  }
+};
+
+/**
+  * Makes sure that tags are correctly nested.
+  * @param {string} nodeName
+  * @param {string} tag
+  */
+var assertCloseMatchesOpenTag = function (nodeName, tag) {
+  if (nodeName !== tag) {
+    throw new Error('Received a call to close "' + tag + '" but "' + nodeName + '" was open.');
+  }
+};
+
+/**
+ * Makes sure that no children elements have been declared yet in the current
+ * element.
+ * @param {string} functionName
+ * @param {?Node} previousNode
+ */
+var assertNoChildrenDeclaredYet = function (functionName, previousNode) {
+  if (previousNode !== null) {
+    throw new Error(functionName + '() must come before any child ' + 'declarations inside the current element.');
+  }
+};
+
+/**
+ * Checks that a call to patchOuter actually patched the element.
+ * @param {?Node} startNode The value for the currentNode when the patch
+ *     started.
+ * @param {?Node} currentNode The currentNode when the patch finished.
+ * @param {?Node} expectedNextNode The Node that is expected to follow the
+ *    currentNode after the patch;
+ * @param {?Node} expectedPrevNode The Node that is expected to preceed the
+ *    currentNode after the patch.
+ */
+var assertPatchElementNoExtras = function (startNode, currentNode, expectedNextNode, expectedPrevNode) {
+  var wasUpdated = currentNode.nextSibling === expectedNextNode && currentNode.previousSibling === expectedPrevNode;
+  var wasChanged = currentNode.nextSibling === startNode.nextSibling && currentNode.previousSibling === expectedPrevNode;
+  var wasRemoved = currentNode === startNode;
+
+  if (!wasUpdated && !wasChanged && !wasRemoved) {
+    throw new Error('There must be exactly one top level call corresponding ' + 'to the patched element.');
+  }
+};
+
+/**
+ * Updates the state of being in an attribute declaration.
+ * @param {boolean} value
+ * @return {boolean} the previous value.
+ */
+var setInAttributes = function (value) {
+  var previous = inAttributes;
+  inAttributes = value;
+  return previous;
+};
+
+/**
+ * Updates the state of being in a skip element.
+ * @param {boolean} value
+ * @return {boolean} the previous value.
+ */
+var setInSkip = function (value) {
+  var previous = inSkip;
+  inSkip = value;
+  return previous;
+};
+
+/**
  * Copyright 2016 The Incremental DOM Authors. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -497,14 +662,21 @@ var patchFactory = function (run) {
     doc = node.ownerDocument;
     currentParent = node.parentNode;
 
-    if ('production' !== 'production') {}
+    if (process.env.NODE_ENV !== 'production') {
+      previousInAttributes = setInAttributes(false);
+      previousInSkip = setInSkip(false);
+    }
 
     var focusPath = getFocusedPath(node, currentParent);
     markFocused(focusPath, true);
     var retVal = run(node, fn, data);
     markFocused(focusPath, false);
 
-    if ('production' !== 'production') {}
+    if (process.env.NODE_ENV !== 'production') {
+      assertVirtualAttributesClosed();
+      setInAttributes(previousInAttributes);
+      setInSkip(previousInSkip);
+    }
 
     context.notifyChanges();
 
@@ -536,7 +708,9 @@ var patchInner = patchFactory(function (node, fn, data) {
   fn(data);
   exitNode();
 
-  if ('production' !== 'production') {}
+  if (process.env.NODE_ENV !== 'production') {
+    assertNoUnclosedTags(currentNode, node);
+  }
 
   return node;
 });
@@ -558,14 +732,19 @@ var patchOuter = patchFactory(function (node, fn, data) {
   var expectedNextNode = null;
   var expectedPrevNode = null;
 
-  if ('production' !== 'production') {}
+  if (process.env.NODE_ENV !== 'production') {
+    expectedNextNode = node.nextSibling;
+    expectedPrevNode = node.previousSibling;
+  }
 
   currentNode = startNode;
   fn(data);
 
-  if ('production' !== 'production') {}
+  if (process.env.NODE_ENV !== 'production') {
+    assertPatchElementNoExtras(startNode, currentNode, expectedNextNode, expectedPrevNode);
+  }
 
-  if (node !== currentNode) {
+  if (node !== currentNode && node.parentNode) {
     removeChild(currentParent, node, getData(currentParent).keyMap);
   }
 
@@ -766,7 +945,9 @@ var coreElementOpen = function (tag, key) {
  * @return {!Element} The corresponding Element.
  */
 var coreElementClose = function () {
-  if ('production' !== 'production') {}
+  if (process.env.NODE_ENV !== 'production') {
+    setInSkip(false);
+  }
 
   exitNode();
   return (/** @type {!Element} */currentNode
@@ -791,7 +972,10 @@ var coreText = function () {
  * @return {!Element}
  */
 var currentElement = function () {
-  if ('production' !== 'production') {}
+  if (process.env.NODE_ENV !== 'production') {
+    assertInPatch('currentElement', context);
+    assertNotInAttributes('currentElement');
+  }
   return (/** @type {!Element} */currentParent
   );
 };
@@ -800,7 +984,10 @@ var currentElement = function () {
  * @return {Node} The Node that will be evaluated for the next instruction.
  */
 var currentPointer = function () {
-  if ('production' !== 'production') {}
+  if (process.env.NODE_ENV !== 'production') {
+    assertInPatch('currentPointer', context);
+    assertNotInAttributes('currentPointer');
+  }
   return getNextNode();
 };
 
@@ -809,7 +996,10 @@ var currentPointer = function () {
  * clearing out the children.
  */
 var skip = function () {
-  if ('production' !== 'production') {}
+  if (process.env.NODE_ENV !== 'production') {
+    assertNoChildrenDeclaredYet('skip', currentNode);
+    setInSkip(true);
+  }
   currentNode = currentParent.lastChild;
 };
 
@@ -1001,7 +1191,10 @@ var argsBuilder = [];
  * @return {!Element} The corresponding Element.
  */
 var elementOpen = function (tag, key, statics, var_args) {
-  if ('production' !== 'production') {}
+  if (process.env.NODE_ENV !== 'production') {
+    assertNotInAttributes('elementOpen');
+    assertNotInSkip('elementOpen');
+  }
 
   var node = coreElementOpen(tag, key);
   var data = getData(node);
@@ -1090,7 +1283,10 @@ var elementOpen = function (tag, key, statics, var_args) {
  *     Element is created.
  */
 var elementOpenStart = function (tag, key, statics) {
-  if ('production' !== 'production') {}
+  if (process.env.NODE_ENV !== 'production') {
+    assertNotInAttributes('elementOpenStart');
+    setInAttributes(true);
+  }
 
   argsBuilder[0] = tag;
   argsBuilder[1] = key;
@@ -1105,7 +1301,9 @@ var elementOpenStart = function (tag, key, statics) {
  * @param {*} value
  */
 var attr = function (name, value) {
-  if ('production' !== 'production') {}
+  if (process.env.NODE_ENV !== 'production') {
+    assertInAttributes('attr');
+  }
 
   argsBuilder.push(name);
   argsBuilder.push(value);
@@ -1116,7 +1314,10 @@ var attr = function (name, value) {
  * @return {!Element} The corresponding Element.
  */
 var elementOpenEnd = function () {
-  if ('production' !== 'production') {}
+  if (process.env.NODE_ENV !== 'production') {
+    assertInAttributes('elementOpenEnd');
+    setInAttributes(false);
+  }
 
   var node = elementOpen.apply(null, argsBuilder);
   argsBuilder.length = 0;
@@ -1130,11 +1331,15 @@ var elementOpenEnd = function () {
  * @return {!Element} The corresponding Element.
  */
 var elementClose = function (tag) {
-  if ('production' !== 'production') {}
+  if (process.env.NODE_ENV !== 'production') {
+    assertNotInAttributes('elementClose');
+  }
 
   var node = coreElementClose();
 
-  if ('production' !== 'production') {}
+  if (process.env.NODE_ENV !== 'production') {
+    assertCloseMatchesOpenTag(getData(node).nodeName, tag);
+  }
 
   return node;
 };
@@ -1168,7 +1373,10 @@ var elementVoid = function (tag, key, statics, var_args) {
  * @return {!Text} The corresponding text node.
  */
 var text = function (value, var_args) {
-  if ('production' !== 'production') {}
+  if (process.env.NODE_ENV !== 'production') {
+    assertNotInAttributes('text');
+    assertNotInSkip('text');
+  }
 
   var node = coreText();
   var data = getData(node);
