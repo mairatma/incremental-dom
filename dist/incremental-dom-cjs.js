@@ -840,7 +840,9 @@ var alignWithDOM = function (nodeName, key) {
  * @param {?Object<string, !Element>} keyMap
  */
 var removeChild = function (node, child, keyMap) {
-  node.removeChild(child);
+  if (child.parentNode === node) {
+    node.removeChild(child);
+  }
   context.markDeleted( /** @type {!Node}*/child);
 
   var key = getData(child).key;
