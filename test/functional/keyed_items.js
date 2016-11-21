@@ -169,6 +169,23 @@ describe('rendering with keys', () => {
     expect(firstNode.parentNode).to.equal(null);
   });
 
+  it('should not throw error if rendering content on parent with outdated key map', () => {
+    function render(tag) {
+      elementVoid(tag, 'key');
+    }
+
+    patch(container, render, 'div');
+    const firstNode = container.childNodes[0];
+
+    container.removeChild(container.childNodes[0]);
+
+    expect(() => patch(container, render, 'span')).to.not.throw(Error);
+    const newNode = container.childNodes[0];
+    expect(newNode).not.to.equal(firstNode);
+    expect(newNode.nodeName).to.equal('SPAN');
+    expect(firstNode.parentNode).to.equal(null);
+  });
+
   it('should preserve nodes already in the DOM', () => {
     function render() {
       elementVoid('div', 'key');
